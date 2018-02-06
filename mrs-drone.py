@@ -24,6 +24,56 @@ import datetime
 import pickle
 import hashlib
 
+# http://tkinter.unpythonic.net/wiki/VerticalScrolledFrame
+
+class VerticalScrolledFrame(tk.Frame):
+    """A pure Tkinter scrollable frame that actually works!
+    * Use the 'interior' attribute to place widgets inside the scrollable frame
+    * Construct and pack/place/grid normally
+    * This frame only allows vertical scrolling
+
+    """
+    def __init__(self, parent, *args, **kw):
+        tk.Frame.__init__(self, parent, *args, **kw)            
+
+        # create a canvas object and a vertical scrollbar for scrolling it
+        vscrollbar = tk.Scrollbar(self, orient=tk.VERTICAL)
+        vscrollbar.pack(fill=tk.Y, side=tk.RIGHT, expand=tk.FALSE)
+        canvas = tk.Canvas(self, bd=0, highlightthickness=0,
+                        yscrollcommand=vscrollbar.set)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=tk.TRUE)
+        vscrollbar.config(command=canvas.yview)
+
+        # reset the view
+        canvas.xview_moveto(0)
+        canvas.yview_moveto(0)
+
+        # create a frame inside the canvas which will be scrolled with it
+        self.interior = interior = tk.Frame(canvas)
+        interior_id = canvas.create_window(0, 0, window=interior,
+                                           anchor=tk.NW)
+
+        # track changes to the canvas and frame width and sync them,
+        # also updating the scrollbar
+        def _configure_interior(event):
+            # update the scrollbars to match the size of the inner frame
+            size = (interior.winfo_reqwidth(), interior.winfo_reqheight())
+            canvas.config(scrollregion="0 0 %s %s" % size)
+            if interior.winfo_reqwidth() != canvas.winfo_width():
+                # update the canvas's width to fit the inner frame
+                canvas.config(width=interior.winfo_reqwidth())
+        interior.bind('<Configure>', _configure_interior)
+
+        def _configure_canvas(event):
+            if interior.winfo_reqwidth() != canvas.winfo_width():
+                # update the inner frame's width to fill the canvas
+                canvas.itemconfigure(interior_id, width=canvas.winfo_width())
+        canvas.bind('<Configure>', _configure_canvas)
+
+
+
+
+
 
 class Application:
     
@@ -234,12 +284,9 @@ class Application:
                                               text  = "Image Manipulation Frame".format(text),
                                               padx  = 5,
                                               pady  = 5)
-            self.image_frame.pack(side = tk.BOTTOM, expand = 1, fill = tk.BOTH)
-            self.image_canvas = tk.Canvas(master = self.image_frame)
-            self.image_canvas.grid()
-            vbar = tk.Scrollbar(master = self.image_canvas, orient = tk.VERTICAL)
-            vbar.pack(side = tk.RIGHT, fill = tk.Y)
-            vbar.config(command = self.image_canvas.yview)
+            self.image_frame.pack(expand = 1, fill = tk.BOTH)
+            self.image_view = VerticalScrolledFrame(parent=self.image_frame)
+            self.image_view.pack(expand = 1, fill = tk.BOTH)
         def __new_database_dialog(self):
             options = {}
             options['defaultextension'] = '.sqlite3'
@@ -323,13 +370,21 @@ class Application:
             def on_close():
                 self.__init_action_frame()
                 self.__unlock_top_level_commands()
-            def query():
-                result = self.database.query_database()
-                
+            def query(contains_human_widget=None):
+                if contains_human_widget is not None:
+                    contains_human_options = {0 : 1,
+                                              1 : 0,
+                                              2 : None}
+                    human = contains_human_options[contains_human_widget.curselection()[0]]
+                else:
+                    human = None
+                result = self.database.query_database(
+                        contains_human = human)
                 self.__init_image_frame()
-                
                 for image in result:
-                    f = tk.Frame(master = self.image_canvas)
+                    print('ID - {}')
+                    f = tk.LabelFrame(master = self.image_view.interior,
+                                      text = image.ID)
                     f.pack(side = tk.TOP)
                     b,g,r = cv.split(image.image)
                     tk_image = ImageTk.PhotoImage(Image.fromarray(cv.merge((r,g,b))))
@@ -365,24 +420,25 @@ class Application:
                                      text   = 'Image Timestamp Range', 
                                      padx   = 5,
                                      pady   = 5)
+            tk.Label(master = timestamp_frame,
+                     text   = 'TODO - query database by timestamp range')
             
             
             tk.Button(master = controls,
                       text = "Retrieve All Images from Database",
                       command = select_all).pack(side = tk.LEFT, expand = 1, fill = tk.BOTH)
+            
+            tk.Button(master = controls,
+                      text = "Retrieve Images which meet given criteria",
+                      command = partial(query,
+                                        contains_human)).pack(side = tk.LEFT, expand = 1, fill = tk.BOTH)
+            
+            
             tk.Button(master = controls,
                       text = 'Exit',
                       command = on_close).pack(side = tk.RIGHT, expand = 1, fill = tk.BOTH)
-
             
-            images = tk.LabelFrame(master   = master,
-                                   text     = 'Images Found',
-                                   padx     = 5,
-                                   pady     = 5)
-            images.pack(side = tk.BOTTOM, expand = 1, fill = tk.BOTH)
-            
-            self.queried_images = []
-            
+            self.__lock_top_level_commands()
         def __edit_image_window(self, data, master=None):
             if master is None:
                 master = self.root
