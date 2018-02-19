@@ -24,6 +24,7 @@ import datetime
 import pickle
 import hashlib
 
+from threading import BoundedSemaphore
 # http://tkinter.unpythonic.net/wiki/VerticalScrolledFrame
 
 class VerticalScrolledFrame(tk.Frame):
@@ -69,9 +70,6 @@ class VerticalScrolledFrame(tk.Frame):
                 # update the inner frame's width to fill the canvas
                 canvas.itemconfigure(interior_id, width=canvas.winfo_width())
         canvas.bind('<Configure>', _configure_canvas)
-
-
-
 
 
 
@@ -131,7 +129,7 @@ class Application:
             return img_hasher.hexdigest()
         def update(self, contains_human):
             self.contains_human = contains_human
-            
+           
     class Database:
         def __init__(self):
             self.connection = None
@@ -176,6 +174,13 @@ class Application:
                               WHERE id = ?;''',
                             (data.contains_human, data.ID))
             self.connection.commit()
+        def delete_image(self, data):
+            print("Deleting image of ID {}".format(data.ID))
+            self.cursor.execute('''DELETE from
+                                images
+                                WHERE
+                                id = '{}';'''.format(data.ID))
+            self.connection.commit()
         def query_database(self, contains_human = None):
             conditions = []
             if contains_human is not None:
@@ -216,6 +221,7 @@ class Application:
         user could just as appropriately be referred to as "System Maintenance"
         '''
         def __init__(self):
+            self.edit_image_window_sem = BoundedSemaphore()
             '''
             Initializes the "Admin" Panel.
             '''
@@ -263,6 +269,8 @@ class Application:
             self.__init_image_frame()
             
             tk.mainloop()
+        #Did not use a semaphore here because this is more about showing the user
+        #which commands are available, rather than controlling timing with the system.
         def __lock_top_level_commands(self):
             for c in self.top_level_commands:
                 c.config(state=tk.DISABLED)
@@ -327,18 +335,25 @@ class Application:
                 paths = filedialog.askopenfilenames(**options)
                 on_close()
                 print(mode)
+                total = len(paths) + 1
+                i = 1
                 if mode == 0:
                     for p in paths:
+                        print('Adding image {} of {}.'.format(i, total))
+                        i += 1
                         img = Application.ImageData.from_file(path=p, contains_human=1)
-                        self.database.update_image(img)
+                        self.__update_database(img, 1)
                 elif mode == 1:
                     for p in paths:
+                        print('Adding image {} of {}.'.format(i, total))
+                        i += 1
                         img = Application.ImageData.from_file(path=p, contains_human=0)
-                        self.database.update_image(img)
+                        self.__update_database(img, 0)
                 else:
                     for p in paths:
                         img = Application.ImageData.from_file(path=p)
                         self.__edit_image_window(img, master=master)
+                        
             mode = tk.Listbox(master = master,
                               selectmode=tk.SINGLE)
             mode.insert(0, 
@@ -362,6 +377,64 @@ class Application:
                 self.database.update_image(data)
             else:
                 self.database.add_image(data)
+        def __delete_image(self, data):
+            self.database.delete_image(data)
+        def __query_database(self, contains_human_widget=None):
+            if contains_human_widget is not None:
+                contains_human_options = {0 : 1,
+                                      1 : 0,
+                                      2 : None}
+                human = contains_human_options[contains_human_widget.curselection()[0]]
+            else:
+                human = None
+            result = self.database.query_database(
+                    contains_human = human)
+            self.__init_image_frame()
+            self.query = {}
+            def delete_callback(f, image):
+                self.__delete_image(image)
+                f.destroy()
+            def update_callback(image, contains_human):
+                image.contains_human = contains_human
+                self.__update_database(image, contains_human)
+                if image.contains_human:
+                    self.query[image.ID]['contains_human_var'].set('Contains a human.')
+                else:
+                    self.query[image.ID]['contains_human_var'].set('Does not contain a human.') 
+            for image in result:
+                f = tk.Frame(master = self.image_view.interior)
+                f.data = image
+                f.pack(side = tk.TOP)
+                self.query[image.ID] = {'frame' : f,
+                          'timestamp'           : image.timestamp,
+                          'contains_human_var'  : tk.StringVar(master=f)}
+                if image.contains_human:
+                    self.query[image.ID]['contains_human_var'].set('Contains a human.')
+                else:
+                    self.query[image.ID]['contains_human_var'].set('Does not contain a human.')
+                b,g,r = cv.split(image.image)
+                tk_image = ImageTk.PhotoImage(Image.fromarray(cv.merge((r,g,b))))
+                label = tk.Label(master = f, image = tk_image)
+                label.image = tk_image
+                label.pack(side = tk.LEFT)
+                controls = tk.Frame(master = f)
+                controls.pack(side=tk.RIGHT, expand=1, fill=tk.BOTH)
+                tk.Label(master = controls, text = 'ID - {}'.format(image.ID)).pack(side=tk.TOP)
+                tk.Label(master = controls, text = 'Timestamp - {}'.format(image.timestamp)).pack(side=tk.TOP)
+                tk.Label(master = controls, 
+                         textvariable = self.query[image.ID]['contains_human_var']).pack(side=tk.TOP)
+                tk.Button(master=controls,
+                          text = 'SET - Image contains a human',
+                          command = partial(update_callback, f.data, 1)).pack(side = tk.TOP, expand = 1, fill = tk.X)
+                tk.Button(master=controls,
+                          text = 'SET - Image does not contain a human',
+                          command = partial(update_callback, f.data, 0)).pack(side = tk.TOP, expand = 1, fill = tk.X)
+                tk.Button(master=controls,
+                          text = 'Delete',
+                          command = partial(delete_callback, f, image)).pack(side = tk.TOP, expand = 1, fill = tk.X)
+                tk.Button(master=controls,
+                          text = 'Dismiss',
+                          command = partial(f.destroy)).pack(side = tk.TOP, expand = 1, fill = tk.X)
         def __query_database_window(self):
             if not self.database.is_open():
                 return
@@ -370,28 +443,6 @@ class Application:
             def on_close():
                 self.__init_action_frame()
                 self.__unlock_top_level_commands()
-            def query(contains_human_widget=None):
-                if contains_human_widget is not None:
-                    contains_human_options = {0 : 1,
-                                              1 : 0,
-                                              2 : None}
-                    human = contains_human_options[contains_human_widget.curselection()[0]]
-                else:
-                    human = None
-                result = self.database.query_database(
-                        contains_human = human)
-                self.__init_image_frame()
-                for image in result:
-                    print('ID - {}')
-                    f = tk.LabelFrame(master = self.image_view.interior,
-                                      text = image.ID)
-                    f.pack(side = tk.TOP)
-                    b,g,r = cv.split(image.image)
-                    tk_image = ImageTk.PhotoImage(Image.fromarray(cv.merge((r,g,b))))
-                    label = tk.Label(master = f, image = tk_image)
-                    label.image = tk_image
-                    label.pack(side = tk.LEFT)
-                    
             def select_all():
                 msg = '''Warning: Do not use the Select All operation on large databases.
                 Are you sure you want to proceed?
@@ -399,7 +450,7 @@ class Application:
                 if not messagebox.askokcancel(title = 'Warning', message = msg, icon = tk.messagebox.WARNING):
                     return
                 print('getting results')
-                query()
+                self.__query_database()
             controls = tk.LabelFrame(master = master,
                                      text   = 'Controls', 
                                      padx   = 5,
@@ -430,25 +481,27 @@ class Application:
             
             tk.Button(master = controls,
                       text = "Retrieve Images which meet given criteria",
-                      command = partial(query,
+                      command = partial(self.__query_database,
                                         contains_human)).pack(side = tk.LEFT, expand = 1, fill = tk.BOTH)
             
             
             tk.Button(master = controls,
                       text = 'Exit',
                       command = on_close).pack(side = tk.RIGHT, expand = 1, fill = tk.BOTH)
-            
             self.__lock_top_level_commands()
         def __edit_image_window(self, data, master=None):
+            print("Called")
+            #self.edit_image_window_sem.acquire(blocking=True)
             if master is None:
                 master = self.root
             def on_close():
                 popup.destroy()
-                self.root.deiconfiy()
+                #self.edit_image_window_sem.release()
             #I'm sorry to anyone who has to read the code of this function...
             #TODO - Clean up this function to remove the need for a popup window, and also
             def on_confirm():
                self. __update_database(data, result.get())
+               on_close()
             popup = tk.Toplevel(master = self.root)
             m = tk.PanedWindow(master = popup)
             m.pack(fill = tk.BOTH, expand = 1)
@@ -512,6 +565,7 @@ class Application:
             right.add(confirm_button)
             m.add(right)
         
+x = Application.AdminInterface()
 '''
 DEPRECATED, old main method from dbPrototype.bak
 
