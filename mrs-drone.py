@@ -221,6 +221,7 @@ class Application:
         user could just as appropriately be referred to as "System Maintenance"
         '''
         def __init__(self):
+            self.model = None
             self.edit_image_window_sem = BoundedSemaphore()
             '''
             Initializes the "Admin" Panel.
@@ -256,6 +257,7 @@ class Application:
                            ('Open Database', self.__open_database_dialog),
                            ('Add Images', self.__add_images_dialog),
                            ('Query Database', self.__query_database_window),
+                           ('Train Model', self.__build_model),
                            ('Exit', partial(on_close, self))]
             self.top_level_commands = []
             for b in button_args:
@@ -442,6 +444,7 @@ class Application:
             master = self.action_frame
             def on_close():
                 self.__init_action_frame()
+                self.__init_image_frame()
                 self.__unlock_top_level_commands()
             def select_all():
                 msg = '''Warning: Do not use the Select All operation on large databases.
@@ -496,6 +499,7 @@ class Application:
                 master = self.root
             def on_close():
                 popup.destroy()
+                self.__init_image_frame()
                 #self.edit_image_window_sem.release()
             #I'm sorry to anyone who has to read the code of this function...
             #TODO - Clean up this function to remove the need for a popup window, and also
@@ -564,8 +568,62 @@ class Application:
                                        command = on_confirm)
             right.add(confirm_button)
             m.add(right)
-        
+        def __build_model(self):
+            self.__init_action_frame(text = "Calibration of SVM")
+            master = self.action_frame
+            def on_close():
+                self.dataset = []
+                self.dataset_diagnostic = 'N/A'
+                self.__init_action_frame()
+                self.__unlock_top_level_commands()
+            def __open_databases():
+                options = {}
+                options['defaultextension'] = '.sqlite3'
+                options['filetypes'] = [('SQLite3 Database', '.sqlite3')]
+                options['title']            = 'Open Database'
+                paths = filedialog.askopenfilenames(**options)
+                self.dataset = []
+                for p in paths:
+                    db = Application.Database()
+                    db.open_database(name = p)
+                    self.dataset += db.query_database()
+                pos = 0
+                neg = 0
+                for i in self.dataset:
+                    if i.contains_human:
+                        pos += 1
+                    else:
+                        neg += 1
+                self.dataset_diagnostic.set('Total Dataset - {} Positive, {} Negative.'.format(
+                        pos, neg))
+            info = tk.LabelFrame(master = master,
+                                text   = 'Information', 
+                                padx   = 5,
+                                pady   = 5)
+            info.pack(side = tk.RIGHT, expand = 1, fill = tk.X)
+            self.dataset_diagnostic = tk.StringVar(master = info,
+                         value = 'Total Dataset - 0 Positive, 0 Negative.')
+            tk.Label(master = info,
+                     textvariable = self.dataset_diagnostic).pack(side = tk.RIGHT, expand = 1, fill = tk.X)
+            controls = tk.LabelFrame(master = master,
+                                text   = 'Controls', 
+                                padx   = 5,
+                                pady   = 5)
+            controls.pack(side = tk.LEFT, expand = 1, fill = tk.X)
+            tk.Button(master = controls,
+                      text = 'Load Database(s)',
+                      command = __open_databases).pack(side = tk.TOP, expand = 1, fill = tk.BOTH)
+            tk.Button(master = controls,
+                      text = 'Exit',
+                      command = on_close).pack(side = tk.BOTTOM, expand = 1, fill = tk.BOTH)
+            self.__lock_top_level_commands()
+    class HD_SVM:
+        def __init__(self, dataset, seed = 42):
+            self.dataset = dataset
+            self.seed = seed
 x = Application.AdminInterface()
+
+
 '''
 DEPRECATED, old main method from dbPrototype.bak
 
