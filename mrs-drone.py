@@ -596,6 +596,7 @@ class Application:
                         neg += 1
                 self.dataset_diagnostic.set('Total Dataset - {} Positive, {} Negative.'.format(
                         pos, neg))
+                self.model = Application.HD_SVM([[d.image for d in self.dataset], [d.contains_human for d in self.dataset]])
             info = tk.LabelFrame(master = master,
                                 text   = 'Information', 
                                 padx   = 5,
@@ -619,7 +620,8 @@ class Application:
             self.__lock_top_level_commands()
     class HD_SVM:
         def __init__(self, dataset, seed = 42):
-            self.dataset = dataset
+            self.dataset_X = dataset[0]
+            self.dataset_y = dataset[1]
             self.seed = seed
 x = Application.AdminInterface()
 
