@@ -24,7 +24,9 @@ import datetime
 import pickle
 import hashlib
 
-from threading import BoundedSemaphore
+import random
+import time
+from sklearn import svm
 # http://tkinter.unpythonic.net/wiki/VerticalScrolledFrame
 
 class VerticalScrolledFrame(tk.Frame):
@@ -222,7 +224,7 @@ class Application:
         '''
         def __init__(self):
             self.model = None
-            self.edit_image_window_sem = BoundedSemaphore()
+
             '''
             Initializes the "Admin" Panel.
             '''
@@ -596,7 +598,7 @@ class Application:
                         neg += 1
                 self.dataset_diagnostic.set('Total Dataset - {} Positive, {} Negative.'.format(
                         pos, neg))
-                self.model = Application.HD_SVM([[d.image for d in self.dataset], [d.contains_human for d in self.dataset]])
+                self.model = Application.HD_SVM([[d.image, d.contains_human] for d in self.dataset])
             info = tk.LabelFrame(master = master,
                                 text   = 'Information', 
                                 padx   = 5,
@@ -620,11 +622,95 @@ class Application:
             self.__lock_top_level_commands()
     class HD_SVM:
         def __init__(self, dataset, seed = 42):
-            self.dataset_X = dataset[0]
-            self.dataset_y = dataset[1]
+            self.X = [d[0] for d in dataset]
+            self.y = [d[1] for d in dataset]
             self.seed = seed
-x = Application.AdminInterface()
+            self.SVM = svm.SVC()
+            self.hog = cv.HOGDescriptor()
+            self.hog.setSVMDetector(cv.HOGDescriptor_getDefaultPeopleDetector())
+            false_positives = []
+            false_negatives = []
+            true_positives = []
+            true_negatives = []
+            self.hits = []
+            t_start = 0
+            t_end = 0
+            t_diff = 0
+            import matplotlib.pyplot as plt
+            for i in range(len(self.X)):
+                t_start = time.time()
+                rectangle = self.hog.detectMultiScale(self.X[i])[0]
+                #rectangle = self.hog.detectMultiScale(self.X[i], winStride=(4,4), padding=(0, 0), scale=1.1)[0]
+                t_end = time.time()
+                t_diff = t_end - t_start
+                print('Processing took {} milliseconds for resolution {}x{}.'.format(t_diff * 1000,
+                      len(self.X[i]),
+                      len(self.X[i][0])))
+                answer = self.y[i]
+                print('Result - {}; Expected - {}'.format(len(rectangle) != 0, answer))
+                if len(rectangle) == 0 and answer == 0:
+                    true_negatives.append(self.X[i])
+                    continue
+                elif len(rectangle) == 0 and answer == 1:
+                    false_negatives.append(self.X[i])
+                    continue
+                elif answer == 0:
+                    false_positives.append(self.X[i])
+                else:
+                    true_positives.append(self.X[i])
+                rectangle = rectangle[0]
+                self.hits.append(self.X[i].copy())
+                cv.rectangle(self.hits[-1],
+                             (rectangle[0], rectangle[1]),
+                             (rectangle[0] + rectangle[2], rectangle[1] + rectangle[3]),
+                             (255, 0, 0))
+            print('{} True Positives, {} True Negatives, {} False Positives, {} False Negatives.'.format(
+                    len(true_positives), len(true_negatives), len(false_positives), len(false_negatives)))
+            
+    class MonitorInterface():
+        def __init__(self, hits):
+            cap = cv.VideoCapture(1)
+            self.SVM = svm.SVC()
+            self.hog = cv.HOGDescriptor()
+            self.hog.setSVMDetector(cv.HOGDescriptor_getDefaultPeopleDetector())
+            while(1):
+                ret, frame = cap.read()
+                #gray = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+                cv.imshow('Live Video Feed', frame)
+                if cv.waitKey(1) & 0xFF == ord('q'):
+                    break
+                rectangle = self.hog.detectMultiScale(frame)[0]
+                
+                if len(rectangle) != 0:
+                    rectangle = rectangle[0]
+                    print('HUMAN DETECTED')
+                    hits.append(frame.copy())
+                    cv.rectangle(hits[-1],
+                                 (rectangle[0], rectangle[1]),
+                                 (rectangle[0] + rectangle[2], rectangle[1] + rectangle[3]),
+                                 (255, 0, 0))
+                time.sleep(1)
+            cap.release()
+            cv.destroyAllWindows()
+#x = Application.AdminInterface()
+#y = Application.MonitorInterface()
+def view(img):
+    cv.imshow('image',img)
+    cv.waitKey(0)
+    cv.destroyAllWindows()
 
+    
+def t1():
+    x = Application.AdminInterface()
+def t2(hits):
+    y = Application.MonitorInterface(hits)
+import _thread
+hits = []
+def review():
+    for img in hits:
+        view(img)
+x = _thread.start_new_thread(t2, (hits,))
+#y = _thread.start_new_thread(t1, ())
 
 '''
 DEPRECATED, old main method from dbPrototype.bak
@@ -639,3 +725,5 @@ def main():
 
 #if __name__ == '__main__': main()
 '''
+
+
